@@ -33,7 +33,7 @@ const client = new Client({
 
 // ---------- CONSTANTS ----------
 const THEME = 0x8000ff; // #8000ff
-const UPTIME_CHANNEL_ID = '1429121620194234478'; // <- live status channel
+const UPTIME_CHANNEL_ID = '1429121620194234478'; // live status channel
 
 // ---------- RUNTIME STATE ----------
 let invitesCache = {};   // per guild: { code: {...} }
@@ -131,13 +131,13 @@ function formatUptime(seconds) {
   return `${pad(h)}:${pad(m)}:${pad(s)}`;
 }
 
-// ✅ Updated: footer with bot logo + “Active:” on its own line
+// ✅ Status embed: "Active:" on one line, "✅ Online" on the next + footer icon
 function buildStatusEmbed() {
   const footerIcon = client.user.displayAvatarURL({ size: 64 });
   return new EmbedBuilder()
     .setColor(THEME)
     .setTitle('🕒 Phantom Forge Invites Bot Status')
-    .setDescription('**Active:**\n✅ Online') // <-- "Active:" above the status
+    .setDescription('**Active:**\n✅ Online')
     .addFields(
       { name: 'Uptime', value: '`' + formatUptime(process.uptime()) + '`', inline: true },
       { name: 'Ping', value: `${Math.max(0, Math.round(client.ws.ping))} ms`, inline: true },
