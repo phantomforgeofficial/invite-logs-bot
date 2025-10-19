@@ -2,18 +2,15 @@ name: Keep Render Awake
 
 on:
   schedule:
-    - cron: "*/2 * * * *"   # every 2 minutes
-  workflow_dispatch:        # allows manual trigger from Actions tab
+    - cron: "*/2 * * * *"   # elke 5 minuten
+  workflow_dispatch:        # handmatig starten kan ook
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping Render health endpoint
+      - name: Curl /health
         run: |
-          echo "Pinging Render health URL..."
-          curl -sSfL --retry 3 --retry-delay 10 "$HEALTH_URL" \
-            && echo "✅ Render responded successfully" \
-            || echo "⚠️ Failed to reach Render (may be sleeping)"
+          curl -sSfL "$HEALTH_URL"
         env:
           HEALTH_URL: "https://phantom-forge-invites-retry.onrender.com/health"
