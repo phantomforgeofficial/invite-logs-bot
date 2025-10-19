@@ -1,0 +1,19 @@
+name: Keep Render Awake
+
+on:
+  schedule:
+    - cron: "*/2 * * * *"   # every 2 minutes
+  workflow_dispatch:        # allows manual trigger from Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Render health endpoint
+        run: |
+          echo "Pinging Render health URL..."
+          curl -sSfL --retry 3 --retry-delay 10 "$HEALTH_URL" \
+            && echo "✅ Render responded successfully" \
+            || echo "⚠️ Failed to reach Render (may be sleeping)"
+        env:
+          HEALTH_URL: "https://phantom-forge-ticket-bot-retry.onrender.com/health"
