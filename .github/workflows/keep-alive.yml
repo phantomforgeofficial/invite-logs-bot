@@ -16,4 +16,4 @@ jobs:
             && echo "✅ Render responded successfully" \
             || echo "⚠️ Failed to reach Render (may be sleeping)"
         env:
-          HEALTH_URL: "https://phantom-forge-ticket-bot-retry.onrender.com/health"
+          HEALTH_URL: "https://phantom-forge-invites-retry.onrender.com/health"
