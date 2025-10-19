@@ -14,7 +14,7 @@ const {
 // ---------- ENV ----------
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
-const GUILD_ID = process.env.GUILD_ID || null; // optional, speeds up command registration
+const GUILD_ID = process.env.GUILD_ID || null; // optional: faster guild command registration
 
 if (!TOKEN || !CLIENT_ID) {
   console.error('❌ Please set DISCORD_TOKEN and CLIENT_ID in your environment.');
@@ -41,7 +41,8 @@ let config = {};         // per guild: { [guildId]: logChannelId }
 let stats = {};          // per guild: { [userId]: { joins, leaves, bonus, lastInviteCode } }
 let statusStore = {};    // { channelId, messageId }
 let membersMap = {};     // per guild: { [memberId]: inviterId }
-let statusInterval = null;
+let statusTimer = null;  // precise aligned timer
+let PROCESS_START_MS = Date.now(); // corrected on 'ready'
 
 // ---------- STORAGE HELPERS ----------
 function loadAll() {
@@ -123,15 +124,19 @@ async function getVanityUsesSafe(guild) {
   }
 }
 
-function formatUptime(seconds) {
-  const s = Math.floor(seconds % 60);
-  const m = Math.floor((seconds / 60) % 60);
-  const h = Math.floor(seconds / 3600);
+// ----- precise uptime helpers -----
+function formatUptimeSeconds(totalSeconds) {
+  const s = totalSeconds % 60;
+  const m = Math.floor(totalSeconds / 60) % 60;
+  const h = Math.floor(totalSeconds / 3600);
   const pad = (n) => String(n).padStart(2, '0');
   return `${pad(h)}:${pad(m)}:${pad(s)}`;
 }
+function currentUptimeSeconds() {
+  return Math.max(0, Math.floor((Date.now() - PROCESS_START_MS) / 1000));
+}
 
-// ✅ Status embed: "Active:" on a new line with "✅ Online" below + footer icon
+// ---------- STATUS EMBED ----------
 function buildStatusEmbed() {
   const footerIcon = client.user.displayAvatarURL({ size: 64 });
   return new EmbedBuilder()
@@ -139,7 +144,7 @@ function buildStatusEmbed() {
     .setTitle('🕒 Phantom Forge Invites Bot Status')
     .setDescription('**Active:**\n✅ Online')
     .addFields(
-      { name: 'Uptime', value: '`' + formatUptime(process.uptime()) + '`', inline: true },
+      { name: 'Uptime', value: '`' + formatUptimeSeconds(currentUptimeSeconds()) + '`', inline: true },
       { name: 'Ping', value: `${Math.max(0, Math.round(client.ws.ping))} ms`, inline: true },
       { name: 'Last update', value: new Date().toLocaleString('en-US'), inline: false }
     )
@@ -167,21 +172,32 @@ async function ensureStatusMessage() {
   return { channel, msg };
 }
 
+// aligned 1-second updates without drift
 function startStatusUpdater() {
-  if (statusInterval) clearInterval(statusInterval);
-  statusInterval = setInterval(async () => {
+  if (statusTimer) clearTimeout(statusTimer);
+
+  const tick = async () => {
     try {
       if (!statusStore.channelId || !statusStore.messageId) {
         await ensureStatusMessage();
-        return;
+      } else {
+        const channel = await client.channels.fetch(statusStore.channelId).catch(() => null);
+        const msg = channel ? await channel.messages.fetch(statusStore.messageId).catch(() => null) : null;
+        if (!msg) {
+          await ensureStatusMessage();
+        } else {
+          await msg.edit({ embeds: [buildStatusEmbed()] });
+        }
       }
-      const channel = await client.channels.fetch(statusStore.channelId).catch(() => null);
-      if (!channel) return;
-      const msg = await channel.messages.fetch(statusStore.messageId).catch(() => null);
-      if (!msg) { await ensureStatusMessage(); return; }
-      await msg.edit({ embeds: [buildStatusEmbed()] });
     } catch { /* ignore transient errors */ }
-  }, 1000);
+
+    // align next run to system second boundary
+    const now = Date.now();
+    const delay = 1000 - (now % 1000) + 5; // +5ms cushion
+    statusTimer = setTimeout(tick, delay);
+  };
+
+  tick();
 }
 
 function computeTotal(s) {
@@ -297,6 +313,10 @@ client.once('ready', async () => {
   console.log(`🤖 Logged in as ${client.user.tag}`);
   await ensureFiles();
   loadAll();
+
+  // Correct process start to match current process.uptime()
+  PROCESS_START_MS = Date.now() - Math.floor(process.uptime() * 1000);
+
   await registerSlashCommands();
 
   // Cosmetic: set username (rate-limited)
@@ -424,8 +444,7 @@ client.on('guildMemberRemove', async (member) => {
   stats[guildId][inviterId] ??= { joins: 0, leaves: 0, bonus: 0, lastInviteCode: null };
   stats[guildId][inviterId].leaves += 1;
   saveStats();
-  // Optionally clear mapping:
-  // delete membersMap[guildId][member.id]; saveMembers();
+  // Optionally: delete membersMap[guildId][member.id]; saveMembers();
 });
 
 // ---------- INTERACTIONS ----------
@@ -545,3 +564,4 @@ const app = express();
 app.get('/', (_req, res) => res.send('✅ Phantom Forge Invites bot is online and running!'));
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🌐 Web server running on port ${PORT}`));
+
