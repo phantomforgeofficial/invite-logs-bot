@@ -15,7 +15,7 @@ const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID || null;
 
 if (!TOKEN || !CLIENT_ID) {
-  console.error('❌ Zet DISCORD_TOKEN en CLIENT_ID in .env');
+  console.error('❌ Zet DISCORD_TOKEN en CLIENT_ID in .env (of Render env vars).');
   process.exit(1);
 }
 
@@ -323,7 +323,7 @@ client.on('interactionCreate', async (interaction) => {
     const guildId = interaction.guildId;
 
     const guildStats = stats[guildId] || {};
-    const entries = Object.entries(guildStats); // [ [userId, { total, lastInviteCode }], ... ]
+    const entries = Object.entries(guildStats);
 
     if (entries.length === 0) {
       return interaction.reply({ content: 'Er zijn nog geen invite-statistieken beschikbaar.', ephemeral: true });
@@ -352,3 +352,14 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 client.login(TOKEN);
+
+// --- Mini webserver zodat Render de bot online houdt ---
+const express = require('express');
+const app = express();
+
+app.get('/', (req, res) => {
+  res.send('✅ Phantom forge Invites bot is online en draait!');
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🌐 Webserver actief op poort ${PORT}`));
