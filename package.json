@@ -1,7 +1,7 @@
 {
-  "name": "invite-logs-bot",
-  "version": "1.1.0",
-  "description": "Discord bot: invite logs + /invites /setinvitelog /avatar",
+  "name": "phantom-forge-invites",
+  "version": "1.2.0",
+  "description": "Discord bot: invite logs + /setinvitelog /invites /avatar /lb",
   "main": "src/index.js",
   "type": "commonjs",
   "scripts": {
