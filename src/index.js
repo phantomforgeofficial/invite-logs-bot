@@ -15,7 +15,7 @@ const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID || null;
 
 if (!TOKEN || !CLIENT_ID) {
-  console.error('❌ Zet DISCORD_TOKEN en CLIENT_ID in .env (of Render env vars).');
+  console.error('❌ Please set DISCORD_TOKEN and CLIENT_ID in your .env or Render environment variables.');
   process.exit(1);
 }
 
@@ -28,7 +28,7 @@ const client = new Client({
   partials: [Partials.GuildMember],
 });
 
-// in-memory state
+// In-memory data
 let invitesCache = {};
 let config = {};
 let stats = {};
@@ -68,7 +68,7 @@ async function fetchAndStoreInvites(guild) {
     }
     saveInvites();
   } catch (e) {
-    console.warn(`[${guild.name}] invites.fetch() faalde: ${e.message}`);
+    console.warn(`[${guild.name}] Could not fetch invites: ${e.message}`);
   }
 }
 
@@ -81,16 +81,18 @@ async function getVanityUsesSafe(guild) {
   }
 }
 
+const PURPLE = 0x8000ff;
+
 const commands = [
   {
     name: 'setinvitelog',
-    description: 'Stel het kanaal voor invite logs in',
+    description: 'Set the channel for invite logs',
     default_member_permissions: (PermissionsBitField.Flags.ManageGuild).toString(),
     options: [
       {
-        type: 7, // CHANNEL
-        name: 'kanaal',
-        description: 'Tekstkanaal voor logs',
+        type: 7,
+        name: 'channel',
+        description: 'Text channel for logs',
         channel_types: [ChannelType.GuildText],
         required: true
       }
@@ -98,36 +100,36 @@ const commands = [
   },
   {
     name: 'invites',
-    description: 'Bekijk invite stats (zonder user = jijzelf)',
+    description: 'Show invite stats (no user = yourself)',
     options: [
       {
-        type: 6, // USER
-        name: 'gebruiker',
-        description: 'Optioneel: kies een gebruiker',
+        type: 6,
+        name: 'user',
+        description: 'Optional: choose a user',
         required: false
       }
     ]
   },
   {
     name: 'avatar',
-    description: 'Toon de avatar van een gebruiker (zonder user = jijzelf)',
+    description: 'Show the avatar of a user (no user = yourself)',
     options: [
       {
-        type: 6, // USER
-        name: 'gebruiker',
-        description: 'Optioneel: kies een gebruiker',
+        type: 6,
+        name: 'user',
+        description: 'Optional: choose a user',
         required: false
       }
     ]
   },
   {
     name: 'lb',
-    description: 'Leaderboard: meeste invites (optioneel: aantal)',
+    description: 'Leaderboard: most invites (optional amount)',
     options: [
       {
-        type: 4, // INTEGER
-        name: 'aantal',
-        description: 'Hoeveel posities (3–25, standaard 10)',
+        type: 4,
+        name: 'amount',
+        description: 'How many positions (3–25, default 10)',
         required: false,
         min_value: 3,
         max_value: 25
@@ -141,35 +143,34 @@ async function registerSlashCommands() {
   try {
     if (GUILD_ID) {
       await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
-      console.log(`✅ Guild commands geregistreerd in guild ${GUILD_ID}`);
+      console.log(`✅ Slash commands registered in guild ${GUILD_ID}`);
     } else {
       await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-      console.log('✅ Global commands geregistreerd (kan even duren om te verschijnen)');
+      console.log('✅ Global slash commands registered (may take up to 1 hour to appear)');
     }
   } catch (e) {
-    console.error('Fout bij registreren commands:', e);
+    console.error('Error registering commands:', e);
   }
 }
 
 client.once('ready', async () => {
-  console.log(`🤖 Ingelogd als ${client.user.tag}`);
+  console.log(`🤖 Logged in as ${client.user.tag}`);
   await ensureFiles();
   loadAll();
   await registerSlashCommands();
 
-  // Probeer botnaam te zetten (rate-limited door Discord, dus try/catch)
+  // Try to set bot username
   (async () => {
     try {
       if (client.user.username !== 'Phantom forge Invites') {
         await client.user.setUsername('Phantom forge Invites');
-        console.log('✅ Botnaam gezet naar "Phantom forge Invites"');
+        console.log('✅ Bot name set to "Phantom forge Invites"');
       }
     } catch (e) {
-      console.warn('⚠️ Kon botnaam niet wijzigen (rate limits/permissions):', e.message);
+      console.warn('⚠️ Could not change bot name (rate limits/permissions):', e.message);
     }
   })();
 
-  // init invite-cache
   for (const g of client.guilds.cache.values()) {
     await fetchAndStoreInvites(g);
   }
@@ -226,7 +227,6 @@ client.on('guildMemberAdd', async (member) => {
     if (afterVanity !== null && afterVanity > beforeVanity) usedVanity = true;
   }
 
-  // Update stats
   if (!stats[guild.id]) stats[guild.id] = {};
   const inviterId = usedInvite?.inviterId || null;
   if (inviterId) {
@@ -236,11 +236,10 @@ client.on('guildMemberAdd', async (member) => {
     saveStats();
   }
 
-  // Log naar kanaal
   const logCh = getLogChannel(guild);
   if (logCh && logCh.permissionsFor(guild.members.me)?.has(PermissionsBitField.Flags.SendMessages)) {
     const emb = new EmbedBuilder()
-      .setColor(0x8367F7)
+      .setColor(PURPLE)
       .setTimestamp()
       .setThumbnail(member.user.displayAvatarURL({ size: 128 }))
       .setAuthor({ name: `${member.user.tag} joined`, iconURL: member.user.displayAvatarURL() });
@@ -248,16 +247,16 @@ client.on('guildMemberAdd', async (member) => {
     if (usedInvite) {
       emb.setDescription(
         `👤 **Member:** ${member}\n` +
-        `🔗 **Invite:** \`${usedInvite.code}\`\n` +
-        `👑 **Uitnodiger:** ${inviterId ? `<@${inviterId}>` : '`onbekend`'}\n` +
-        `#️⃣ **Kanaal:** ${usedInvite.channelId ? `<#${usedInvite.channelId}>` : '`onbekend`'}\n` +
-        `♻️ **Gebruik:** ${usedInvite.uses ?? 0}/${usedInvite.maxUses ?? '∞'}\n` +
-        (usedInvite.expiresAt ? `⏰ **Verloopt:** <t:${Math.floor(usedInvite.expiresAt/1000)}:R>\n` : '')
-      ).setFooter({ text: `Gebruikte invite: ${usedInvite.code}` });
+        `🔗 **Invite Code:** \`${usedInvite.code}\`\n` +
+        `👑 **Inviter:** ${inviterId ? `<@${inviterId}>` : '`Unknown`'}\n` +
+        `#️⃣ **Channel:** ${usedInvite.channelId ? `<#${usedInvite.channelId}>` : '`Unknown`'}\n` +
+        `♻️ **Uses:** ${usedInvite.uses ?? 0}/${usedInvite.maxUses ?? '∞'}\n` +
+        (usedInvite.expiresAt ? `⏰ **Expires:** <t:${Math.floor(usedInvite.expiresAt/1000)}:R>\n` : '')
+      ).setFooter({ text: `Invite used: ${usedInvite.code}` });
     } else if (usedVanity) {
-      emb.setDescription(`👤 **Member:** ${member}\n✨ **Vanity URL** gebruikt`);
+      emb.setDescription(`👤 **Member:** ${member}\n✨ Used the vanity URL invite.`);
     } else {
-      emb.setDescription(`👤 **Member:** ${member}\n❓ Invite niet kunnen bepalen (permissies/weggegooide invite).`);
+      emb.setDescription(`👤 **Member:** ${member}\n❓ Could not determine which invite was used.`);
     }
 
     logCh.send({ embeds: [emb] }).catch(() => {});
@@ -269,64 +268,64 @@ client.on('interactionCreate', async (interaction) => {
 
   // /setinvitelog
   if (interaction.commandName === 'setinvitelog') {
-    const ch = interaction.options.getChannel('kanaal', true);
+    const ch = interaction.options.getChannel('channel', true);
     if (ch.type !== ChannelType.GuildText) {
-      return interaction.reply({ content: 'Kies een **tekstkanaal**.', ephemeral: true });
+      return interaction.reply({ content: 'Please select a **text channel**.', ephemeral: true });
     }
     if (!interaction.memberPermissions.has(PermissionsBitField.Flags.ManageGuild)) {
-      return interaction.reply({ content: 'Je mist **Manage Server**.', ephemeral: true });
+      return interaction.reply({ content: 'You need **Manage Server** permission to use this command.', ephemeral: true });
     }
     config[interaction.guildId] = ch.id;
     saveConfig();
-    return interaction.reply({ content: `✅ Invite logs kanaal ingesteld op ${ch}.`, ephemeral: true });
+    return interaction.reply({ content: `✅ Invite logs channel set to ${ch}.`, ephemeral: true });
   }
 
-  // /invites [gebruiker]
+  // /invites [user]
   if (interaction.commandName === 'invites') {
-    const user = interaction.options.getUser('gebruiker') ?? interaction.user;
+    const user = interaction.options.getUser('user') ?? interaction.user;
     const gStats = stats[interaction.guildId]?.[user.id];
     const total = gStats?.total ?? 0;
     const code = gStats?.lastInviteCode ? `\`${gStats.lastInviteCode}\`` : '–';
 
     const embed = new EmbedBuilder()
-      .setColor(0x2ecc71)
+      .setColor(PURPLE)
       .setAuthor({ name: `${user.tag}`, iconURL: user.displayAvatarURL() })
-      .setTitle('Invite stats')
+      .setTitle('Invite Statistics')
       .addFields(
-        { name: 'Totaal members uitgenodigd', value: String(total), inline: true },
-        { name: 'Laatst gebruikte code', value: code, inline: true }
+        { name: 'Total Invited Members', value: String(total), inline: true },
+        { name: 'Last Used Code', value: code, inline: true }
       )
       .setTimestamp();
 
     return interaction.reply({ embeds: [embed] });
   }
 
-  // /avatar [gebruiker]
+  // /avatar [user]
   if (interaction.commandName === 'avatar') {
-    const user = interaction.options.getUser('gebruiker') ?? interaction.user;
+    const user = interaction.options.getUser('user') ?? interaction.user;
     const url = user.displayAvatarURL({ size: 1024, extension: 'png', forceStatic: false });
 
     const embed = new EmbedBuilder()
-      .setColor(0x3498db)
+      .setColor(PURPLE)
       .setAuthor({ name: `${user.tag}`, iconURL: user.displayAvatarURL() })
       .setTitle('Avatar')
       .setImage(url)
-      .setFooter({ text: `Gebruiker ID: ${user.id}` })
+      .setFooter({ text: `User ID: ${user.id}` })
       .setTimestamp();
 
     return interaction.reply({ embeds: [embed] });
   }
 
-  // /lb [aantal]
+  // /lb [amount]
   if (interaction.commandName === 'lb') {
-    const amount = interaction.options.getInteger('aantal') ?? 10;
+    const amount = interaction.options.getInteger('amount') ?? 10;
     const guildId = interaction.guildId;
 
     const guildStats = stats[guildId] || {};
     const entries = Object.entries(guildStats);
 
     if (entries.length === 0) {
-      return interaction.reply({ content: 'Er zijn nog geen invite-statistieken beschikbaar.', ephemeral: true });
+      return interaction.reply({ content: 'No invite statistics available yet.', ephemeral: true });
     }
 
     const top = entries
@@ -337,11 +336,11 @@ client.on('interactionCreate', async (interaction) => {
       const place = i + 1;
       const medal = place === 1 ? '🥇' : place === 2 ? '🥈' : place === 3 ? '🥉' : `#${place}`;
       const total = s?.total ?? 0;
-      return `${medal} <@${userId}> — **${total}**`;
+      return `${medal} <@${userId}> — **${total}** invites`;
     });
 
     const embed = new EmbedBuilder()
-      .setColor(0xf1c40f)
+      .setColor(PURPLE)
       .setTitle('🏆 Invite Leaderboard')
       .setDescription(lines.join('\n'))
       .setFooter({ text: `Top ${lines.length} • Server: ${interaction.guild.name}` })
@@ -353,13 +352,11 @@ client.on('interactionCreate', async (interaction) => {
 
 client.login(TOKEN);
 
-// --- Mini webserver zodat Render de bot online houdt ---
+// --- Keep-alive web server for Render Free plan ---
 const express = require('express');
 const app = express();
-
 app.get('/', (req, res) => {
-  res.send('✅ Phantom forge Invites bot is online en draait!');
+  res.send('✅ Phantom forge Invites bot is online and running!');
 });
-
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🌐 Webserver actief op poort ${PORT}`));
+app.listen(PORT, () => console.log(`🌐 Web server running on port ${PORT}`));
