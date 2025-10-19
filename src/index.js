@@ -2,7 +2,7 @@ require('dotenv').config();
 const {
   Client, GatewayIntentBits, Partials,
   PermissionsBitField, ChannelType,
-  EmbedBuilder, REST, Routes, Collection
+  EmbedBuilder, REST, Routes
 } = require('discord.js');
 
 const {
@@ -28,6 +28,7 @@ const client = new Client({
   partials: [Partials.GuildMember],
 });
 
+// in-memory state
 let invitesCache = {};
 let config = {};
 let stats = {};
@@ -118,6 +119,20 @@ const commands = [
         required: false
       }
     ]
+  },
+  {
+    name: 'lb',
+    description: 'Leaderboard: meeste invites (optioneel: aantal)',
+    options: [
+      {
+        type: 4, // INTEGER
+        name: 'aantal',
+        description: 'Hoeveel posities (3–25, standaard 10)',
+        required: false,
+        min_value: 3,
+        max_value: 25
+      }
+    ]
   }
 ];
 
@@ -141,6 +156,18 @@ client.once('ready', async () => {
   await ensureFiles();
   loadAll();
   await registerSlashCommands();
+
+  // Probeer botnaam te zetten (rate-limited door Discord, dus try/catch)
+  (async () => {
+    try {
+      if (client.user.username !== 'Phantom forge Invites') {
+        await client.user.setUsername('Phantom forge Invites');
+        console.log('✅ Botnaam gezet naar "Phantom forge Invites"');
+      }
+    } catch (e) {
+      console.warn('⚠️ Kon botnaam niet wijzigen (rate limits/permissions):', e.message);
+    }
+  })();
 
   // init invite-cache
   for (const g of client.guilds.cache.values()) {
@@ -201,7 +228,7 @@ client.on('guildMemberAdd', async (member) => {
 
   // Update stats
   if (!stats[guild.id]) stats[guild.id] = {};
-  let inviterId = usedInvite?.inviterId || null;
+  const inviterId = usedInvite?.inviterId || null;
   if (inviterId) {
     stats[guild.id][inviterId] ??= { total: 0, lastInviteCode: null };
     stats[guild.id][inviterId].total += 1;
@@ -209,14 +236,8 @@ client.on('guildMemberAdd', async (member) => {
     saveStats();
   }
 
-  const logCh = (function getLogChannel() {
-    const id = config[guild.id];
-    if (id) return guild.channels.cache.get(id);
-    return guild.channels.cache.find(
-      ch => ch.type === ChannelType.GuildText && ch.name.toLowerCase() === 'invite-logs'
-    );
-  })();
-
+  // Log naar kanaal
+  const logCh = getLogChannel(guild);
   if (logCh && logCh.permissionsFor(guild.members.me)?.has(PermissionsBitField.Flags.SendMessages)) {
     const emb = new EmbedBuilder()
       .setColor(0x8367F7)
@@ -291,6 +312,39 @@ client.on('interactionCreate', async (interaction) => {
       .setTitle('Avatar')
       .setImage(url)
       .setFooter({ text: `Gebruiker ID: ${user.id}` })
+      .setTimestamp();
+
+    return interaction.reply({ embeds: [embed] });
+  }
+
+  // /lb [aantal]
+  if (interaction.commandName === 'lb') {
+    const amount = interaction.options.getInteger('aantal') ?? 10;
+    const guildId = interaction.guildId;
+
+    const guildStats = stats[guildId] || {};
+    const entries = Object.entries(guildStats); // [ [userId, { total, lastInviteCode }], ... ]
+
+    if (entries.length === 0) {
+      return interaction.reply({ content: 'Er zijn nog geen invite-statistieken beschikbaar.', ephemeral: true });
+    }
+
+    const top = entries
+      .sort((a, b) => (b[1]?.total ?? 0) - (a[1]?.total ?? 0))
+      .slice(0, amount);
+
+    const lines = top.map(([userId, s], i) => {
+      const place = i + 1;
+      const medal = place === 1 ? '🥇' : place === 2 ? '🥈' : place === 3 ? '🥉' : `#${place}`;
+      const total = s?.total ?? 0;
+      return `${medal} <@${userId}> — **${total}**`;
+    });
+
+    const embed = new EmbedBuilder()
+      .setColor(0xf1c40f)
+      .setTitle('🏆 Invite Leaderboard')
+      .setDescription(lines.join('\n'))
+      .setFooter({ text: `Top ${lines.length} • Server: ${interaction.guild.name}` })
       .setTimestamp();
 
     return interaction.reply({ embeds: [embed] });
