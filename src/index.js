@@ -131,7 +131,7 @@ function formatUptime(seconds) {
   return `${pad(h)}:${pad(m)}:${pad(s)}`;
 }
 
-// ✅ Status embed: "Active:" on one line, "✅ Online" on the next + footer icon
+// ✅ Status embed: "Active:" on a new line with "✅ Online" below + footer icon
 function buildStatusEmbed() {
   const footerIcon = client.user.displayAvatarURL({ size: 64 });
   return new EmbedBuilder()
@@ -353,8 +353,10 @@ client.on('inviteDelete', async (invite) => {
   }
 });
 
+// ---------- MEMBER ADD ----------
 client.on('guildMemberAdd', async (member) => {
   const guild = member.guild;
+
   const beforeVanity = await getVanityUsesSafe(guild);
   const before = invitesCache[guild.id] ? new Map(Object.entries(invitesCache[guild.id])) : new Map();
 
@@ -390,35 +392,29 @@ client.on('guildMemberAdd', async (member) => {
     saveMembers();
   }
 
-  // Log to channel (if configured)
+  // ------- LOG MESSAGE (styled like your screenshot) -------
   const logCh = getLogChannel(guild);
   if (logCh && logCh.permissionsFor(guild.members.me)?.has(PermissionsBitField.Flags.SendMessages)) {
-    const emb = new EmbedBuilder()
-      .setColor(THEME)
-      .setTimestamp()
-      .setThumbnail(member.user.displayAvatarURL({ size: 128 }))
-      .setAuthor({ name: `${member.user.tag} joined`, iconURL: member.user.displayAvatarURL() });
-
+    let sourceLabel = 'OAuth flow';
+    let byText = '`unknown`';
     if (usedInvite) {
-      emb.setDescription(
-        `👤 **Member:** ${member}\n` +
-        `🔗 **Invite Code:** \`${usedInvite.code}\`\n` +
-        `👑 **Inviter:** ${inviterId ? `<@${inviterId}>` : '`Unknown`'}\n` +
-        `#️⃣ **Channel:** ${usedInvite.channelId ? `<#${usedInvite.channelId}>` : '`Unknown`'}\n` +
-        `♻️ **Uses:** ${usedInvite.uses ?? 0}/${usedInvite.maxUses ?? '∞'}\n` +
-        (usedInvite.expiresAt ? `⏰ **Expires:** <t:${Math.floor(usedInvite.expiresAt/1000)}:R>\n` : '')
-      ).setFooter({ text: `Invite used: ${usedInvite.code}` });
+      sourceLabel = 'Invite';
+      byText = inviterId ? `<@${inviterId}> (\`${usedInvite.code}\`)` : '`unknown`';
     } else if (usedVanity) {
-      emb.setDescription(`👤 **Member:** ${member}\n✨ Used the vanity URL invite.`);
-    } else {
-      emb.setDescription(`👤 **Member:** ${member}\n❓ Could not determine which invite was used.`);
+      sourceLabel = 'Vanity URL';
+      byText = '`unknown`';
     }
-
-    logCh.send({ embeds: [emb] }).catch(() => {});
+    const createdSec = Math.floor(member.user.createdTimestamp / 1000);
+    const message =
+      `Welcome **${member.user.tag}** !\n` +
+      `Created <t:${createdSec}:R>\n` +
+      `They were invited by \`${sourceLabel}\` (${byText})\n` +
+      `\`${guild.name}\` now has \`${guild.memberCount}\` members`;
+    logCh.send({ content: message }).catch(() => {});
   }
 });
 
-// Track leaves → increment "leaves" for the original inviter
+// ---------- MEMBER REMOVE ----------
 client.on('guildMemberRemove', async (member) => {
   const guildId = member.guild.id;
   const gMap = membersMap[guildId] || {};
@@ -428,7 +424,8 @@ client.on('guildMemberRemove', async (member) => {
   stats[guildId][inviterId] ??= { joins: 0, leaves: 0, bonus: 0, lastInviteCode: null };
   stats[guildId][inviterId].leaves += 1;
   saveStats();
-  // Optionally: delete membersMap[guildId][member.id]; saveMembers();
+  // Optionally clear mapping:
+  // delete membersMap[guildId][member.id]; saveMembers();
 });
 
 // ---------- INTERACTIONS ----------
