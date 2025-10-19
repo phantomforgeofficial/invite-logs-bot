@@ -8,7 +8,7 @@ const express = require('express');
 
 const {
   ensureFiles, readJSON, writeJSON,
-  paths: { INVITE_CACHE_PATH, CONFIG_PATH, STATS_PATH, STATUS_PATH }
+  paths: { INVITE_CACHE_PATH, CONFIG_PATH, STATS_PATH, STATUS_PATH, MEMBERS_PATH }
 } = require('./storage');
 
 // ---------- ENV ----------
@@ -33,28 +33,58 @@ const client = new Client({
 
 // ---------- CONSTANTS ----------
 const THEME = 0x8000ff; // #8000ff
-const UPTIME_CHANNEL_ID = '1429121620194234478'; // <- your required channel for the live status
+const UPTIME_CHANNEL_ID = '1429121620194234478'; // <- live status channel
 
 // ---------- RUNTIME STATE ----------
-let invitesCache = {};  // per guild: { code: { uses, inviterId, ... } }
-let config = {};        // per guild: { [guildId]: logChannelId }
-let stats = {};         // per guild: { [userId]: { total, lastInviteCode } }
-let statusStore = {};   // { channelId, messageId } for the live status
+let invitesCache = {};   // per guild: { code: {...} }
+let config = {};         // per guild: { [guildId]: logChannelId }
+let stats = {};          // per guild: { [userId]: { joins, leaves, bonus, lastInviteCode } }
+let statusStore = {};    // { channelId, messageId }
+let membersMap = {};     // per guild: { [memberId]: inviterId }
 let statusInterval = null;
 
-// ---------- UTIL STORAGE ----------
+// ---------- STORAGE HELPERS ----------
 function loadAll() {
   invitesCache = readJSON(INVITE_CACHE_PATH);
   config = readJSON(CONFIG_PATH);
   stats = readJSON(STATS_PATH);
   statusStore = readJSON(STATUS_PATH);
+  membersMap = readJSON(MEMBERS_PATH);
+  migrateOldStatsSchema();
 }
 function saveInvites(){ writeJSON(INVITE_CACHE_PATH, invitesCache); }
 function saveConfig(){ writeJSON(CONFIG_PATH, config); }
 function saveStats(){ writeJSON(STATS_PATH, stats); }
 function saveStatus(){ writeJSON(STATUS_PATH, statusStore); }
+function saveMembers(){ writeJSON(MEMBERS_PATH, membersMap); }
 
-// ---------- HELPERS ----------
+// Migrate older { total } schema -> { joins, leaves, bonus }
+function migrateOldStatsSchema() {
+  let changed = false;
+  for (const [gid, byUser] of Object.entries(stats)) {
+    for (const [uid, s] of Object.entries(byUser)) {
+      if (s && typeof s === 'object' && s.total != null && s.joins == null) {
+        const total = Number(s.total) || 0;
+        stats[gid][uid] = {
+          joins: total,
+          leaves: 0,
+          bonus: 0,
+          lastInviteCode: s.lastInviteCode ?? null
+        };
+        changed = true;
+      } else {
+        stats[gid][uid] ??= {};
+        stats[gid][uid].joins ??= 0;
+        stats[gid][uid].leaves ??= 0;
+        stats[gid][uid].bonus ??= 0;
+        if (!('lastInviteCode' in stats[gid][uid])) stats[gid][uid].lastInviteCode = null;
+      }
+    }
+  }
+  if (changed) saveStats();
+}
+
+// ---------- UTILS ----------
 function getLogChannel(guild) {
   const cfgId = config[guild.id];
   if (cfgId) return guild.channels.cache.get(cfgId) ?? null;
@@ -101,7 +131,9 @@ function formatUptime(seconds) {
   return `${pad(h)}:${pad(m)}:${pad(s)}`;
 }
 
+// ✅ Updated: footer with bot logo
 function buildStatusEmbed() {
+  const footerIcon = client.user.displayAvatarURL({ size: 64 });
   return new EmbedBuilder()
     .setColor(THEME)
     .setTitle('🕒 Phantom Forge Invites Bot Status')
@@ -111,31 +143,25 @@ function buildStatusEmbed() {
       { name: 'Ping', value: `${Math.max(0, Math.round(client.ws.ping))} ms`, inline: true },
       { name: 'Last update', value: new Date().toLocaleString('en-US'), inline: false }
     )
-    .setFooter({ text: 'Live updated every second | Phantom Forge' })
+    .setFooter({ text: 'Live updated every second | Phantom Forge', iconURL: footerIcon })
     .setTimestamp();
 }
 
 async function ensureStatusMessage() {
-  // Fetch the channel by ID (works across all guilds the bot can see)
   const channel = await client.channels.fetch(UPTIME_CHANNEL_ID).catch(() => null);
   if (!channel || channel.type !== ChannelType.GuildText) {
     console.warn('⚠️ Uptime channel not found or not a text channel. ID:', UPTIME_CHANNEL_ID);
     return null;
   }
-
-  // Try to fetch saved message
   let msg = null;
   if (statusStore.messageId) {
     msg = await channel.messages.fetch(statusStore.messageId).catch(() => null);
   }
-
   if (!msg) {
-    // Send a new status message and remember its ID
     msg = await channel.send({ embeds: [buildStatusEmbed()] });
     statusStore = { channelId: channel.id, messageId: msg.id };
     saveStatus();
   } else {
-    // Update the existing one once immediately
     await msg.edit({ embeds: [buildStatusEmbed()] });
   }
   return { channel, msg };
@@ -152,15 +178,28 @@ function startStatusUpdater() {
       const channel = await client.channels.fetch(statusStore.channelId).catch(() => null);
       if (!channel) return;
       const msg = await channel.messages.fetch(statusStore.messageId).catch(() => null);
-      if (!msg) {
-        await ensureStatusMessage();
-        return;
-      }
+      if (!msg) { await ensureStatusMessage(); return; }
       await msg.edit({ embeds: [buildStatusEmbed()] });
-    } catch {
-      // swallow transient errors/rate-limits
-    }
+    } catch { /* ignore transient errors */ }
   }, 1000);
+}
+
+function computeTotal(s) {
+  const joins = s?.joins ?? 0;
+  const leaves = s?.leaves ?? 0;
+  const bonus = s?.bonus ?? 0;
+  return joins - leaves + bonus;
+}
+
+// Presence helper — Watching (server name)
+async function setWatchingPresence() {
+  try {
+    const ch = await client.channels.fetch(UPTIME_CHANNEL_ID).catch(() => null);
+    const guildName = ch?.guild?.name || 'server invites';
+    await client.user.setActivity(guildName, { type: 3 }); // 3 = Watching
+  } catch {
+    client.user.setActivity('server invites', { type: 3 });
+  }
 }
 
 // ---------- SLASH COMMANDS ----------
@@ -216,6 +255,25 @@ const commands = [
         max_value: 25
       }
     ]
+  },
+  {
+    name: 'bonus',
+    description: 'Add or subtract bonus invites for a user',
+    default_member_permissions: (PermissionsBitField.Flags.ManageGuild).toString(),
+    options: [
+      {
+        type: 6,
+        name: 'user',
+        description: 'User to modify',
+        required: true
+      },
+      {
+        type: 4,
+        name: 'amount',
+        description: 'Amount to add (use negative to subtract)',
+        required: true
+      }
+    ]
   }
 ];
 
@@ -241,7 +299,7 @@ client.once('ready', async () => {
   loadAll();
   await registerSlashCommands();
 
-  // Cosmetic: set username (rate-limited by Discord)
+  // Cosmetic: set username (rate-limited)
   try {
     if (client.user.username !== 'Phantom forge Invites') {
       await client.user.setUsername('Phantom forge Invites');
@@ -251,25 +309,28 @@ client.once('ready', async () => {
     console.warn('⚠️ Could not change bot name (rate limits/permissions):', e.message);
   }
 
-  // Initialize invite cache for all guilds
+  // Init invite cache
   for (const g of client.guilds.cache.values()) {
     await fetchAndStoreInvites(g);
   }
 
-  // Ensure & start the always-on live status
+  // Start live status
   await ensureStatusMessage();
   startStatusUpdater();
 
-  // Presence
-  client.user.setActivity('server invites', { type: 3 }); // Watching
+  // Presence: Watching (server name)
+  await setWatchingPresence();
 });
 
-// ---------- EVENTS ----------
 client.on('guildCreate', async (guild) => {
   await fetchAndStoreInvites(guild);
   if (GUILD_ID && guild.id === GUILD_ID) await registerSlashCommands();
+  await setWatchingPresence();
 });
 
+client.on('guildDelete', setWatchingPresence);
+
+// ---------- EVENTS ----------
 client.on('inviteCreate', async (invite) => {
   const g = invite.guild;
   if (!invitesCache[g.id]) invitesCache[g.id] = {};
@@ -279,7 +340,7 @@ client.on('inviteCreate', async (invite) => {
     channelId: invite.channelId ?? null,
     maxUses: invite.maxUses ?? null,
     createdTimestamp: invite.createdTimestamp ?? null,
-    expiresAt: invite.expiresAt ? invite.expiresAt.getTime() : null,
+    expiresAt: invite.expiresAt ? inv.expiresAt.getTime() : null,
   };
   saveInvites();
 });
@@ -294,7 +355,6 @@ client.on('inviteDelete', async (invite) => {
 
 client.on('guildMemberAdd', async (member) => {
   const guild = member.guild;
-
   const beforeVanity = await getVanityUsesSafe(guild);
   const before = invitesCache[guild.id] ? new Map(Object.entries(invitesCache[guild.id])) : new Map();
 
@@ -316,14 +376,18 @@ client.on('guildMemberAdd', async (member) => {
     if (afterVanity !== null && afterVanity > beforeVanity) usedVanity = true;
   }
 
-  // Update stats
+  // Update stats & remember inviter for this member
   if (!stats[guild.id]) stats[guild.id] = {};
+  if (!membersMap[guild.id]) membersMap[guild.id] = {};
+
   const inviterId = usedInvite?.inviterId || null;
   if (inviterId) {
-    stats[guild.id][inviterId] ??= { total: 0, lastInviteCode: null };
-    stats[guild.id][inviterId].total += 1;
+    stats[guild.id][inviterId] ??= { joins: 0, leaves: 0, bonus: 0, lastInviteCode: null };
+    stats[guild.id][inviterId].joins += 1;
     stats[guild.id][inviterId].lastInviteCode = usedInvite.code;
+    membersMap[guild.id][member.id] = inviterId;
     saveStats();
+    saveMembers();
   }
 
   // Log to channel (if configured)
@@ -354,6 +418,19 @@ client.on('guildMemberAdd', async (member) => {
   }
 });
 
+// Track leaves → increment "leaves" for the original inviter
+client.on('guildMemberRemove', async (member) => {
+  const guildId = member.guild.id;
+  const gMap = membersMap[guildId] || {};
+  const inviterId = gMap[member.id];
+  if (!inviterId) return;
+  stats[guildId] ??= {};
+  stats[guildId][inviterId] ??= { joins: 0, leaves: 0, bonus: 0, lastInviteCode: null };
+  stats[guildId][inviterId].leaves += 1;
+  saveStats();
+  // Optionally: delete membersMap[guildId][member.id]; saveMembers();
+});
+
 // ---------- INTERACTIONS ----------
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
@@ -373,17 +450,17 @@ client.on('interactionCreate', async (interaction) => {
 
   if (interaction.commandName === 'invites') {
     const user = interaction.options.getUser('user') ?? interaction.user;
-    const gStats = stats[interaction.guildId]?.[user.id];
-    const total = gStats?.total ?? 0;
-    const code = gStats?.lastInviteCode ? `\`${gStats.lastInviteCode}\`` : '–';
+    const s = stats[interaction.guildId]?.[user.id] ?? { joins: 0, leaves: 0, bonus: 0 };
+    const total = computeTotal(s);
 
     const embed = new EmbedBuilder()
       .setColor(THEME)
       .setAuthor({ name: `${user.tag}`, iconURL: user.displayAvatarURL() })
-      .setTitle('Invite Statistics')
+      .setDescription(`**${total} Invites**`)
       .addFields(
-        { name: 'Total Invited Members', value: String(total), inline: true },
-        { name: 'Last Used Code', value: code, inline: true }
+        { name: '🟩 Joins', value: `**${s.joins}**`, inline: true },
+        { name: '🟥 Leaves', value: `**${s.leaves}**`, inline: true },
+        { name: '✨ Bonus', value: `**${s.bonus}**`, inline: true }
       )
       .setTimestamp();
 
@@ -407,34 +484,59 @@ client.on('interactionCreate', async (interaction) => {
 
   if (interaction.commandName === 'lb') {
     const amount = interaction.options.getInteger('amount') ?? 10;
-    const guildId = interaction.guildId;
-
-    const guildStats = stats[guildId] || {};
-    const entries = Object.entries(guildStats);
-
+    const g = stats[interaction.guildId] || {};
+    const entries = Object.entries(g);
     if (entries.length === 0) {
       return interaction.reply({ content: 'No invite statistics available yet.', ephemeral: true });
     }
 
     const top = entries
-      .sort((a, b) => (b[1]?.total ?? 0) - (a[1]?.total ?? 0))
+      .map(([uid, s]) => [uid, computeTotal(s)])
+      .sort((a, b) => b[1] - a[1])
       .slice(0, amount);
 
-    const lines = top.map(([userId, s], i) => {
+    const lines = top.map(([uid, total], i) => {
       const place = i + 1;
       const medal = place === 1 ? '🥇' : place === 2 ? '🥈' : place === 3 ? '🥉' : `#${place}`;
-      const total = s?.total ?? 0;
-      return `${medal} <@${userId}> — **${total}** invites`;
+      return `${medal} <@${uid}> — **${total}** invites`;
     });
 
     const embed = new EmbedBuilder()
       .setColor(THEME)
       .setTitle('🏆 Invite Leaderboard')
       .setDescription(lines.join('\n'))
-      .setFooter({ text: `Top ${lines.length} • Server: ${interaction.guild.name}` })
       .setTimestamp();
 
     return interaction.reply({ embeds: [embed] });
+  }
+
+  if (interaction.commandName === 'bonus') {
+    if (!interaction.memberPermissions.has(PermissionsBitField.Flags.ManageGuild)) {
+      return interaction.reply({ content: 'You need **Manage Server** permission to use this command.', ephemeral: true });
+    }
+    const user = interaction.options.getUser('user', true);
+    const amount = interaction.options.getInteger('amount', true);
+    stats[interaction.guildId] ??= {};
+    stats[interaction.guildId][user.id] ??= { joins: 0, leaves: 0, bonus: 0, lastInviteCode: null };
+    stats[interaction.guildId][user.id].bonus += amount;
+    saveStats();
+
+    const s = stats[interaction.guildId][user.id];
+    const total = computeTotal(s);
+
+    const embed = new EmbedBuilder()
+      .setColor(THEME)
+      .setTitle('Bonus Updated')
+      .setDescription(`Updated bonus for ${user}: **${amount > 0 ? `+${amount}` : amount}**`)
+      .addFields(
+        { name: '🟩 Joins', value: `**${s.joins}**`, inline: true },
+        { name: '🟥 Leaves', value: `**${s.leaves}**`, inline: true },
+        { name: '✨ Bonus', value: `**${s.bonus}**`, inline: true },
+        { name: 'Total', value: `**${total}**`, inline: false }
+      )
+      .setTimestamp();
+
+    return interaction.reply({ embeds: [embed], ephemeral: true });
   }
 });
 
