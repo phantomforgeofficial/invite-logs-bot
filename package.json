@@ -1,0 +1,17 @@
+{
+  "name": "invite-logs-bot",
+  "version": "1.1.0",
+  "description": "Discord bot: invite logs + /invites /setinvitelog /avatar",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "discord.js": "^14.15.3",
+    "dotenv": "^16.4.5"
+  }
+}
