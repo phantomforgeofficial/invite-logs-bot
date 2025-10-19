@@ -19,10 +19,12 @@ async function ensureFiles() {
     catch { await fsp.writeFile(p, JSON.stringify(defVal, null, 2), 'utf8'); }
   }
 }
+
 function readJSON(p) {
   try { return JSON.parse(fs.readFileSync(p, 'utf8')); }
   catch { return {}; }
 }
+
 function writeJSON(p, obj) {
   fs.writeFileSync(p, JSON.stringify(obj, null, 2), 'utf8');
 }
