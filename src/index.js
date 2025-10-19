@@ -131,13 +131,13 @@ function formatUptime(seconds) {
   return `${pad(h)}:${pad(m)}:${pad(s)}`;
 }
 
-// ✅ Updated: footer with bot logo
+// ✅ Updated: footer with bot logo + “Active:” on its own line
 function buildStatusEmbed() {
   const footerIcon = client.user.displayAvatarURL({ size: 64 });
   return new EmbedBuilder()
     .setColor(THEME)
     .setTitle('🕒 Phantom Forge Invites Bot Status')
-    .setDescription('**Active:** ✅ Online')
+    .setDescription('**Active:**\n✅ Online') // <-- "Active:" above the status
     .addFields(
       { name: 'Uptime', value: '`' + formatUptime(process.uptime()) + '`', inline: true },
       { name: 'Ping', value: `${Math.max(0, Math.round(client.ws.ping))} ms`, inline: true },
@@ -340,7 +340,7 @@ client.on('inviteCreate', async (invite) => {
     channelId: invite.channelId ?? null,
     maxUses: invite.maxUses ?? null,
     createdTimestamp: invite.createdTimestamp ?? null,
-    expiresAt: invite.expiresAt ? inv.expiresAt.getTime() : null,
+    expiresAt: invite.expiresAt ? invite.expiresAt.getTime() : null,
   };
   saveInvites();
 });
