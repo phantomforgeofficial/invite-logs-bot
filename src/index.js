@@ -561,7 +561,24 @@ client.login(TOKEN);
 
 // ---------- EXPRESS KEEP-ALIVE (Render Free) ----------
 const app = express();
-app.get('/', (_req, res) => res.send('✅ Phantom Forge Invites bot is online and running!'));
+
+// Basic homepage
+app.get('/', (_req, res) => {
+  res.send('✅ Phantom Forge Invites bot is online and running!');
+});
+
+// Proper health endpoint for uptime/monitoring
+app.get('/health', (_req, res) => {
+  res.status(200).json({
+    ok: true,
+    service: 'phantom-forge-invites',
+    uptime_s: Math.floor(process.uptime()),
+    timestamp: Date.now()
+  });
+});
+
+// Optional: respond to HEAD for lightweight checks
+app.head('/health', (_req, res) => res.status(200).end());
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🌐 Web server running on port ${PORT}`));
-
